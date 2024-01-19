@@ -82,8 +82,10 @@
 
 using namespace llvm;
 
+#ifndef __wasi__
 static void SignalHandler(int Sig);     // defined below.
 static void InfoSignalHandler(int Sig); // defined below.
+#endif
 
 using SignalHandlerFunctionType = void (*)();
 /// The function to call if ctrl-c is pressed.
@@ -206,6 +208,7 @@ struct FilesToRemoveCleanup {
 
 static StringRef Argv0;
 
+#ifndef __wasi__
 /// Signals that represent requested termination. There's no bug or failure, or
 /// if there is, it's not our direct responsibility. For whatever reason, our
 /// continued execution is no longer desirable.
@@ -285,8 +288,10 @@ static void CreateSigAltStack() {
 #else
 static void CreateSigAltStack() {}
 #endif
+#endif // __wasi__
 
 static void RegisterHandlers() { // Not signal-safe.
+#ifndef __wasi__
   // The mutex prevents other threads from registering handlers while we're
   // doing it. We also have to protect the handlers and their count because
   // a signal handler could fire while we're registeting handlers.
@@ -335,15 +340,18 @@ static void RegisterHandlers() { // Not signal-safe.
     registerHandler(SIGPIPE, SignalKind::IsKill);
   for (auto S : InfoSigs)
     registerHandler(S, SignalKind::IsInfo);
+#endif
 }
 
 void sys::unregisterHandlers() {
+#ifndef __wasi__
   // Restore all of the signal handlers to how they were before we showed up.
   for (unsigned i = 0, e = NumRegisteredSignals.load(); i != e; ++i) {
     sigaction(RegisteredSignalInfo[i].SigNo, &RegisteredSignalInfo[i].SA,
               nullptr);
     --NumRegisteredSignals;
   }
+#endif
 }
 
 /// Process the FilesToRemove list.
@@ -352,21 +360,25 @@ static void RemoveFilesToRemove() {
 }
 
 void sys::CleanupOnSignal(uintptr_t Context) {
+#ifndef __wasi__
   int Sig = (int)Context;
 
   if (llvm::is_contained(InfoSigs, Sig)) {
     InfoSignalHandler(Sig);
     return;
   }
-
+#endif
   RemoveFilesToRemove();
 
+#ifndef __wasi__
   if (llvm::is_contained(IntSigs, Sig) || Sig == SIGPIPE)
     return;
+#endif
 
   llvm::sys::RunSignalHandlers();
 }
 
+#ifndef __wasi__
 // The signal handler that runs.
 static void SignalHandler(int Sig) {
   // Restore the signal behavior to default, so that the program actually
@@ -417,6 +429,7 @@ static void InfoSignalHandler(int Sig) {
   if (SignalHandlerFunctionType CurrentInfoFunction = InfoSignalFunction)
     CurrentInfoFunction();
 }
+#endif // __wasi__
 
 void llvm::sys::RunInterruptHandlers() { RemoveFilesToRemove(); }
 

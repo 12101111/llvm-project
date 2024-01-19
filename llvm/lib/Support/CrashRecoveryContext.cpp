@@ -13,8 +13,10 @@
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/thread.h"
 #include <cassert>
+#ifndef __wasi__
 #include <mutex>
 #include <setjmp.h>
+#endif
 
 using namespace llvm;
 
@@ -31,7 +33,9 @@ struct CrashRecoveryContextImpl {
   const CrashRecoveryContextImpl *Next;
 
   CrashRecoveryContext *CRC;
+#ifndef __wasi__
   ::jmp_buf JumpBuffer;
+#endif
   volatile unsigned Failed : 1;
   unsigned SwitchedThread : 1;
   unsigned ValidJumpBuffer : 1;
@@ -72,10 +76,13 @@ public:
 
     CRC->RetCode = RetCode;
 
+#ifdef __wasi__
+    abort();
+#else
     // Jump back to the RunSafely we were called under.
     if (ValidJumpBuffer)
       longjmp(JumpBuffer, 1);
-
+#endif
     // Otherwise let the caller decide of the outcome of the crash. Currently
     // this occurs when using SEH on Windows with MSVC or clang-cl.
   }
@@ -329,8 +336,10 @@ static void uninstallExceptionOrSignalHandlers() {
   }
 }
 
-#else // !_WIN32
-
+#elif defined (__wasi__) // !_WIN32
+static void installExceptionOrSignalHandlers() {}
+static void uninstallExceptionOrSignalHandlers() {}
+#else
 // Generic POSIX implementation.
 //
 // This implementation relies on synchronous signals being delivered to the
@@ -418,9 +427,11 @@ bool CrashRecoveryContext::RunSafely(function_ref<void()> Fn) {
     Impl = CRCI;
 
     CRCI->ValidJumpBuffer = true;
+#ifndef __wasi__
     if (setjmp(CRCI->JumpBuffer) != 0) {
       return false;
     }
+#endif
   }
 
   Fn();
@@ -469,6 +480,8 @@ bool CrashRecoveryContext::throwIfCrash(int RetCode) {
     return false;
 #if defined(_WIN32)
   ::RaiseException(RetCode, 0, 0, NULL);
+#elif defined (__wasi__)
+  abort();
 #else
   llvm::sys::unregisterHandlers();
   raise(RetCode - 128);

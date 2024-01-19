@@ -96,6 +96,7 @@ ErrorOr<std::string> sys::findProgramByName(StringRef Name,
   return errc::no_such_file_or_directory;
 }
 
+#ifndef __wasi__
 static bool RedirectIO(std::optional<StringRef> Path, int FD, std::string *ErrMsg) {
   if (!Path) // Noop
     return false;
@@ -123,6 +124,7 @@ static bool RedirectIO(std::optional<StringRef> Path, int FD, std::string *ErrMs
   close(InFD); // Close the original FD
   return false;
 }
+#endif
 
 #ifdef HAVE_POSIX_SPAWN
 static bool RedirectIO_PS(const std::string *Path, int FD, std::string *ErrMsg,
@@ -177,6 +179,11 @@ static bool Execute(ProcessInfo &PI, StringRef Program,
                     ArrayRef<std::optional<StringRef>> Redirects,
                     unsigned MemoryLimit, std::string *ErrMsg,
                     BitVector *AffinityMask) {
+#ifdef __wasi__
+  if (ErrMsg)
+    *ErrMsg = "wasi does not support process spawning";
+  return false;
+#else
   if (!llvm::sys::fs::exists(Program)) {
     if (ErrMsg)
       *ErrMsg = std::string("Executable \"") + Program.str() +
@@ -337,8 +344,10 @@ static bool Execute(ProcessInfo &PI, StringRef Program,
   PI.Process = child;
 
   return true;
+#endif
 }
 
+#ifndef __wasi__
 namespace llvm {
 namespace sys {
 
@@ -384,12 +393,14 @@ pid_t(llvm::sys::wait4)(pid_t pid, int *status, int options,
   return ::wait4(pid, status, options & ~WNOHANG, usage);
 }
 #endif
+#endif // __wasi__
 
 ProcessInfo llvm::sys::Wait(const ProcessInfo &PI,
                             std::optional<unsigned> SecondsToWait,
                             std::string *ErrMsg,
                             std::optional<ProcessStatistics> *ProcStat,
                             bool Polling) {
+#ifndef __wasi__
   struct sigaction Act, Old;
   assert(PI.Pid && "invalid pid to wait on, process not started?");
 
@@ -507,6 +518,12 @@ ProcessInfo llvm::sys::Wait(const ProcessInfo &PI,
     WaitResult.ReturnCode = -2;
   }
   return WaitResult;
+#else
+  ProcessInfo WaitResult;
+  WaitResult.Pid = 0;
+  WaitResult.ReturnCode = -1;
+  return WaitResult;
+#endif
 }
 
 std::error_code llvm::sys::ChangeStdinMode(fs::OpenFlags Flags) {

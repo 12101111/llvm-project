@@ -117,7 +117,11 @@ bool LockFileManager::processStillExecuting(StringRef HostID, int PID) {
     return true; // Conservatively assume it's executing on error.
 
   // Check whether the process is dead. If so, we're done.
-  if (StoredHostID == HostID && getsid(PID) == -1 && errno == ESRCH)
+  if (StoredHostID == HostID && 
+#ifndef __wasi__
+  getsid(PID) == -1 && 
+#endif
+  errno == ESRCH)
     return false;
 #endif
 
